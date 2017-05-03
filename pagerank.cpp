@@ -1,127 +1,135 @@
 #include <fstream>
-#include <vector>
-#include <set>
+#include <mpi.h>
 #include <iostream>
-#include <utility>
+#include <vector>
+#include <stdio.h>
 
 using namespace std;
 
-// Explanation of basic functionality
-// Called if error occurs
-void usage() 
-{
-    cerr << "Usage: " << endl
-    	 << "./pagerank [filename][rounds] " << endl
-         << "filename" << endl
-         << "    the name of the file you want to perform a PageRank on " << endl
-         << "rounds" << endl
-         << "    the amount of rounds you want PageRank to run for " << endl;
-};
-
-// Main pagerank function, called after error checking
-int pagerank(char*  args[]) 
-{
-	ifstream file(args[1]);
-
-	set<int> nodes;
-	vector< pair<int,int> > adjacency_list;
-	
-	// First and second line from the input file
-	int value1, value2;
-	// second command line argument, specifies amount of rounds
-	int rounds = stoi(args[2]);
-
-	// Read input stream and push to node list for unique identifies, as well as adjacency list for neighbor pairs
-	while(file >> value1 >> value2)
-	{
-		nodes.insert(value1);
-		nodes.insert(value2);
-		adjacency_list.push_back(pair<int, int> (value1, value2));
-	}
-
-	cout << "Set size: " << nodes.size() << endl;
-	cout << "Nodes: " << endl;
-	for (set<int>::iterator it=nodes.begin(); it!=nodes.end(); ++it){
-		cout << *it << endl;
-    }
-    cout << "Adjacency List: " << endl;
-    for ( pair<int,int> 	&edge : adjacency_list ){
-   		cout << edge.first << "\t" << edge.second << endl;
-	}
-    return 0;
-};
-
-// Helper function to check if second argument (the file input) exists and is accessible
-bool fileExists(char file[])
-{
-	ifstream test_file(file);
-
-    if (!test_file.is_open()) {
-    	test_file.close();
-        return false;
-    }
-    test_file.close();
-    return true;
-};
-
-// Helper function to check if third argument (the amount of rounds) is an integer value
-// Taken from http://stackoverflow.com/questions/29248585/c-checking-command-line-argument-is-integer-or-not
-bool isNumber(char number[])
-{
-    int i = 0;
-    
-    //checking for negative numbers
-    if (number[0] == '-')
-        i = 1;
-    for (; number[i] != 0; i++)
+// Actual pagerank function
+vector <double> pagerank(int r, vector< vector<double> > credit_ranking, int myrank, vector<int> processID, vector< vector<int> > adjacency_list, vector<int> degrees)
+{   
+    for(int id=0; id<adjacency_list.size(); id++) 
     {
-        //if (number[i] > '9' || number[i] < '0')
-        if (!isdigit(number[i]))
-            return false;
-    }
-    return true;
-};
+        if(!adjacency_list[id].empty()) 
+        {
+            if(processID[id]==myrank) 
+            {
+                double c = 0.0f;
+                for (int i=0; i < adjacency_list[id].size(); i++) 
+                {
+                    c = c + credit_ranking[r-1][adjacency_list[id][i]]/degrees[adjacency_list[id][i]];
+                } credit_ranking[r][id] = c;
+            }
+        }
+    } 
+    return credit_ranking[r];
+}
 
-// Check if amount of arguments passed is exactly 3 (the program itself, file name and amount of rounds desired)
-// Exit gracefully if not, display error message and call usage(), which explains basic functionality 
-int main(int argc, char* argv[])
-{
-    if (argc == 1){
-    	cerr << "" << endl
-    		 << "Zero arguments were passed, two are needed" << endl
-    		 << "" << endl;
-    	usage();
-        exit(1);
-    }	
-    if (argc == 2){
-    	cerr << "" << endl
-    		 << "One argument was passed, two are needed" << endl
-    		 << "" << endl;
-    	usage();
-        exit(1);
+// Reads file input and stores it, calls pagerank, manages mpi updates, write output files
+int main(int argc, char* argv[]) {
+	int nprocs, myrank;
+
+    double start_time_process, end_time_process;
+	double start_read, end_read; 
+   
+	MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+
+    start_time_process = MPI_Wtime();
+    start_read = MPI_Wtime(); 
+
+    ifstream first_file(argv[1]); 
+    ifstream second_file(argv[2]);
+
+    int rounds = 5;
+    int highest_value;
+    int value1, value2;
+	int max;
+
+    while (second_file >> highest_value) {
+    	if (highest_value > max)
+    		max = highest_value;
     }
-    if (argc > 3){
-    	cerr << "" << endl
-    		 << "More than two arguments were passed, two are needed" << endl
-    		 << "" << endl;
-    	usage();
-        exit(1);
+
+    second_file.clear();
+    second_file.seekg(0, ios::beg);
+
+    vector< vector <int> > adjacency_list(max+1);
+
+    while(first_file >> value1 >> value2) {
+    	adjacency_list[value1].push_back(value2);
+    	adjacency_list[value2].push_back(value1);
     }
-    if (fileExists(argv[1]) == false) {
-    	cerr << "" << endl
-    		 << "The provided file either can't be opened or does not exist" << endl
-    		 << "" << endl;
-    	usage();
-        exit(1);
+
+    int value3, value4, value5;
+
+    vector<int> processID(max+1);
+    vector<int> degrees(max+1);
+
+    // Make list to identify processes and degrees for every node
+    while (second_file >> value3 >> value4 >> value5) {
+            processID[value3]=value5;
+            degrees[value3]=value4;  
     }
-    if (isNumber(argv[2]) == false) {
-    	cerr << "" << endl
-    		 << "The argument provided for the amount of rounds is not an integer" << endl
-    		 << "" << endl;
-    	usage();
-        exit(1);
+
+    // Stop reading and storing time and output it
+    end_read = MPI_Wtime();
+    cout << "Time to read and store input files @ process " << myrank << ": " << end_read - start_read <<endl;
+    
+    // Initialize vector that holds ranking
+    vector< vector< double > > credit_ranking(rounds+1, vector<double>(max+1, 0.0f));
+    for (int i = 0; i <= max; i++) {
+        credit_ranking[0][i]=1.0f;
     }
-    else {
-       	pagerank(argv);
+
+    double round_start, round_end;
+    vector<double> final_credit;
+    for(int r = 1; r <= rounds; r++) {        
+        // Start measuring time for one round
+        round_start = MPI_Wtime();
+        
+        // Call pagerank funtion
+        vector<double> process_credit = pagerank(r, credit_ranking, myrank, processID, adjacency_list, degrees);
+        vector<double> world_credit(process_credit.size());
+
+        // Update global list of credit rankings
+        MPI_Allreduce(process_credit.data(), world_credit.data(), credit_ranking[1].size(), MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        credit_ranking[r]=world_credit;
+        
+        // Stop total time and output it
+        round_end = MPI_Wtime();
+        
+        cout << "Time for round " << r << " @ process " << myrank << ": " << round_end - round_start << endl;
     }
-};
+
+    cout << "Test credit, should be 0.00526958: " << credit_ranking[1][20] << endl;
+
+    // Create output stream, iterate through rounds and credit values, write to file, close stream
+    // Changed from C++ ostream to C fprintf for performance reasons
+    FILE* process_output;
+    string output_name = "pagerank.out." + to_string(myrank);
+    process_output = fopen(output_name.c_str(), "w");
+
+    for(int i = 0; i<adjacency_list.size(); i++) {
+        if(processID[i] == myrank) {
+            fprintf(process_output, "%d\t%d\t", i, degrees[i]);
+            for (int j = 1; j<=rounds; j++) {
+                fprintf(process_output, "\t%lf\t", credit_ranking[j][i]);
+            }
+            fprintf(process_output, "\n");
+        }
+    }
+    fclose(process_output);
+
+    //Stop total time
+    end_time_process = MPI_Wtime();
+
+    // Output total time to complete this process
+    cout << "Total time @ process " << myrank << ": " << end_time_process - start_time_process << endl;
+    
+    // Terminate process
+    MPI_Finalize();
+    return 0;
+}
